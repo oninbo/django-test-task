@@ -2,6 +2,7 @@ import os
 from django.db import models
 from django.core.exceptions import ValidationError
 from django.utils.translation import gettext_lazy as _
+from django.db.models.signals import m2m_changed
 
 
 class Shop(models.Model):
@@ -47,23 +48,28 @@ class Category(models.Model):
     children = models.ManyToManyField(to='self', related_name='parents',
                                       through='CategoryRelationship',
                                       through_fields=('parent', 'child'),
-                                      blank=True
+                                      blank=True,
+                                      symmetrical=False
                                       )
+
+    def is_self_parent(self):
+        return len(self.parents.filter(id=self.id)) > 0
 
     def __str__(self):
         return self.title
 
 
 class CategoryRelationship(models.Model):
-    parent = models.ForeignKey(Category, on_delete=models.CASCADE, related_name='child')
-    child = models.ForeignKey(Category, on_delete=models.CASCADE, related_name='parent')
+    parent = models.ForeignKey(
+        Category, on_delete=models.CASCADE, related_name='child')
+    child = models.ForeignKey(
+        Category, on_delete=models.CASCADE, related_name='parent')
 
-    def save(self, *args, **kwargs):
-        if self.child.children_set.filter(id=self.parent.id):
-            raise ValidationError(
-                _(f"{self.child.title} category is a parent to {self.parent.title} and can not be set as a child."))
-        elif self.parent.parents_set.filter(id=self.child.id):
-            raise ValidationError(
-                _(f"{self.parent.title} category is a child to {self.child.title} and can not be set as a parent."))
-        else:
-            super().save(*args, **kwargs)
+
+def check_category_relationship_validity(sender, **kwargs):
+    instance = kwargs["instance"]
+    if instance.is_self_parent():
+        raise ValidationError(_(f"Category {instance} can not be a parent to itself"))
+
+
+m2m_changed.connect(check_category_relationship_validity)
